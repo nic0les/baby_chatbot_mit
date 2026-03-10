@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, RotateCcw } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Message } from "../types";
 
 const WELCOME: Message = {
@@ -39,18 +41,42 @@ function Bubble({ msg }: { msg: Message }) {
       className={`msg-in flex ${isUser ? "justify-end" : "justify-start"} mb-3`}
     >
       <div
-        className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
+        className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed break-words ${
           isUser
             ? "bg-[#1c1c1c] text-white rounded-br-sm"
-            : "bg-surface border border-border text-[#1c1c1c] rounded-bl-sm"
+            : "bg-surface border border-border text-[#1c1c1c] rounded-bl-sm prose prose-sm max-w-none"
         }`}
         style={{
-          boxShadow: isUser
-            ? "none"
-            : "0 1px 2px rgba(0,0,0,0.04)",
+          boxShadow: isUser ? "none" : "0 1px 2px rgba(0,0,0,0.04)",
         }}
       >
-        {msg.content}
+        {isUser ? (
+          msg.content
+        ) : (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+              h1: ({ children }) => <h1 className="font-semibold text-[14px] mb-1 mt-2">{children}</h1>,
+              h2: ({ children }) => <h2 className="font-semibold text-[13px] mb-1 mt-2">{children}</h2>,
+              h3: ({ children }) => <h3 className="font-semibold text-[13px] mb-1 mt-2">{children}</h3>,
+              ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+              li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+              em: ({ children }) => <em className="italic">{children}</em>,
+              code: ({ children }) => (
+                <code className="bg-bg px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
+              ),
+              hr: () => <hr className="border-border my-2" />,
+              a: ({ href, children }) => (
+                <a href={href} className="text-[#A31F34] underline" target="_blank" rel="noreferrer">{children}</a>
+              ),
+            }}
+          >
+            {msg.content}
+          </ReactMarkdown>
+        )}
       </div>
     </div>
   );
@@ -100,7 +126,7 @@ export default function ChatPanel({ messages, onSend, onReset, isLoading }: Prop
             Course Advisor
           </div>
           <div className="text-[11px]" style={{ color: "var(--muted)" }}>
-            Powered by Claude
+            Powered by Qwen3-8B
           </div>
         </div>
         <button

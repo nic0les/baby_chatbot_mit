@@ -203,27 +203,54 @@ export default function Home() {
     major: "6-4",
   });
 
-  // ── Chat send ────────────────────────────────────────────────────────────────
+  // ── Chat send (streaming) ────────────────────────────────────────────────────
   async function handleSend(content: string) {
     const userMsg: Message = { role: "user", content, timestamp: new Date() };
     const next = [...messages, userMsg];
     setMessages(next);
     setIsLoading(true);
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: next, profile }),
       });
-      const data = await res.json();
-      setMessages([
-        ...next,
-        {
-          role: "assistant",
-          content: data.error ? `Error: ${data.error}` : data.message,
-          timestamp: new Date(),
-        },
-      ]);
+
+      // Non-streaming error response (backend offline, etc.)
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({ error: res.statusText }));
+        setMessages([...next, { role: "assistant", content: `Error: ${data.error}`, timestamp: new Date() }]);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+      let started = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        fullContent += decoder.decode(value, { stream: true });
+
+        // Hide typing indicator and show streaming message on first chunk
+        if (!started) {
+          started = true;
+          setIsLoading(false);
+        }
+
+        setMessages([
+          ...next,
+          { role: "assistant", content: fullContent, timestamp: new Date() },
+        ]);
+      }
+
+      if (!started) {
+        // Stream was empty
+        setMessages([...next, { role: "assistant", content: "No response received.", timestamp: new Date() }]);
+      }
     } catch {
       setMessages([
         ...next,
