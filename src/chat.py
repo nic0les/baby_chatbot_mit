@@ -27,8 +27,9 @@ Help students plan their schedule by:
 1. Respecting hard constraints: prerequisites, unit limits, GIR/major requirements not yet met, spring 2026 availability.
 2. Understanding soft preferences: interests, workload, time of day, class size.
 3. Recommending only courses that appear in the provided catalog context — never hallucinate course numbers or titles.
-4. The "tags:" field for each course is authoritative. If it says "tags: none", that course has NO GIR attributes — do NOT add CI-M, CI-H, HASS, or REST based on your training data.
-   IMPORTANT: CI-M data is NOT present in this catalog dataset (it lives on separate MIT pages not yet scraped). Never claim a course is CI-M unless "CI-M" appears explicitly in its tags field. If asked about CI-M, say the data isn't available and direct the student to web.mit.edu/commreq/cim.
+4. The "tags:" field for each course is authoritative. If it says "tags: none", that course has NO GIR attributes — do NOT add CI-H, HASS, or REST based on your training data.
+   CI-M data IS present: courses that satisfy a CI-M requirement show "ci-m: <major codes>" in the catalog context. Use this to answer CI-M questions. Never claim a course is CI-M unless "ci-m:" appears explicitly in the provided context.
+   CI-M is major-specific: when the student's major is known, the catalog context is pre-filtered to CI-M courses valid for that major. If the student asks about CI-M for a different major (e.g. "for my friend in 6-2"), use the major they specified.
 5. Explaining clearly WHY each course fits the student's situation.
 6. Flagging uncertainty: if something isn't confirmed in the catalog data, say so.
 
@@ -62,9 +63,27 @@ _COURSE_CODE_RE = re.compile(
     r'\b(\d+\.[A-Z0-9]+|[A-Z]+\.\d+[A-Z0-9]*)\b', re.IGNORECASE
 )
 
+# Matches MIT major codes: 6-3, 6-14, 10-ENG, 18-C, 6-P, etc.
+# Uses dash (not dot) so it doesn't collide with course codes.
+_MAJOR_CODE_RE = re.compile(r'\b(\d{1,2}[A-Za-z]*-(?:\d+[A-Za-z]*|[A-Za-z]+))\b')
+
 
 def _extract_course_codes(text: str) -> list[str]:
     return [m.group(1).upper() for m in _COURSE_CODE_RE.finditer(text)]
+
+
+def _extract_major_code(text: str) -> str | None:
+    """Return the first MIT major code found in text (e.g. '6-3'), or None."""
+    m = _MAJOR_CODE_RE.search(text)
+    return m.group(1).upper() if m else None
+
+
+def _profile_major_code(profile: dict | None) -> str | None:
+    """Normalize profile['major'] to a CI-M major code, e.g. '6-3 CS' → '6-3'."""
+    if not profile:
+        return None
+    raw = profile.get("major", "") or ""
+    return _extract_major_code(raw)
 
 
 def _detect_tags(query: str) -> list[str]:
@@ -107,8 +126,22 @@ def _resolve_search_intent(messages: list[dict]) -> tuple[str, list[str]]:
     return query, tags
 
 
-def _build_context(messages: list[dict], spring_only: bool = True) -> str:
+def _build_context(
+    messages: list[dict],
+    spring_only: bool = True,
+    profile: dict | None = None,
+) -> str:
     query, required_tags = _resolve_search_intent(messages)
+
+    # Determine CI-M major filter: prefer explicit mention in query over profile
+    ci_m_major: str | None = None
+    if "CI-M" in required_tags:
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+        )
+        query_major = _extract_major_code(last_user)
+        profile_major = _profile_major_code(profile)
+        ci_m_major = query_major or profile_major
 
     # Direct lookup for any course codes mentioned in the last 6 messages
     recent_text = " ".join(m["content"] for m in messages[-6:])
@@ -121,7 +154,11 @@ def _build_context(messages: list[dict], spring_only: bool = True) -> str:
 
     # Semantic search
     semantic_courses = search_courses(
-        query, n_results=12, spring_only=spring_only, required_tags=required_tags or None
+        query,
+        n_results=12,
+        spring_only=spring_only,
+        required_tags=required_tags or None,
+        ci_m_major=ci_m_major,
     )
 
     # Merge: direct lookups first (guaranteed relevant), then semantic
@@ -148,7 +185,10 @@ def _build_context(messages: list[dict], spring_only: bool = True) -> str:
 
     lines = []
     if courses:
-        lines.append("## Relevant courses from MIT catalog (Spring 2026):\n")
+        header = "## Relevant courses from MIT catalog (Spring 2026):"
+        if ci_m_major:
+            header += f" (CI-M filtered for major {ci_m_major})"
+        lines.append(header + "\n")
         for c in courses:
             tags = json.loads(c.get("requirement_tags", "[]"))
             spring = "✓ Spring 2026" if c.get("offered_spring_2026") else "✗ not offered spring 2026"
@@ -157,6 +197,8 @@ def _build_context(messages: list[dict], spring_only: bool = True) -> str:
             if c.get("prereq_text"):
                 parts.append(f"prereqs: {c['prereq_text']}")
             parts.append(f"tags: {tag_str}")
+            if c.get("ci_m_majors"):
+                parts.append(f"ci-m: {c['ci_m_majors']}")
             if c.get("meeting_times_raw"):
                 parts.append(f"times: {c['meeting_times_raw']}")
             lines.append("- " + " | ".join(parts))
@@ -183,7 +225,7 @@ def stream_chat(
 
     client = InferenceClient(api_key=HF_TOKEN)
 
-    context = _build_context(messages, spring_only=True)
+    context = _build_context(messages, spring_only=True, profile=profile)
 
     # Build profile preamble
     profile_parts = []

@@ -10,3 +10,12 @@ node_modules/
 ui/node_modules
 .DS_Store
 ui/.next
+ui/.env.local
+
+.env
+.env.*
+ui/.env.local
+
+.env
+.env.*
+ui/.env.local

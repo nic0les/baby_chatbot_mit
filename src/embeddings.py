@@ -8,6 +8,7 @@ so subsequent server starts are instant (~0.5s).
 import json
 import os
 import re
+import sqlite3
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -16,6 +17,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHROMA_DIR = os.path.join(BASE_DIR, "data", "chroma")
 MERGED_JSON = os.path.join(
     BASE_DIR, "mit_course_scraper", "data", "processed", "merged_courses.json"
+)
+COURSES_DB = os.path.join(
+    BASE_DIR, "mit_course_scraper", "data", "processed", "courses.db"
 )
 COLLECTION_NAME = "mit_courses"
 
@@ -41,6 +45,7 @@ def get_collection():
         col = client.get_collection(COLLECTION_NAME, embedding_function=ef)
         if col.count() > 0:
             print(f"  Loaded ChromaDB: {col.count()} courses indexed")
+            _backfill_ci_m(col)
             _collection = col
             return _collection
     except Exception:
@@ -55,6 +60,57 @@ def get_collection():
     _build_index(col)
     _collection = col
     return _collection
+
+
+def _load_ci_m_from_db() -> dict[str, str]:
+    """Return {subject_code: ci_m_text} for all courses with CI-M data from SQLite."""
+    if not os.path.exists(COURSES_DB):
+        return {}
+    try:
+        conn = sqlite3.connect(COURSES_DB)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT subject_code, ci_m FROM subjects WHERE ci_m IS NOT NULL AND ci_m != ''"
+        )
+        result = {row[0]: row[1] for row in cur.fetchall()}
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"  Warning: could not load CI-M from DB: {e}")
+        return {}
+
+
+def _backfill_ci_m(col) -> None:
+    """Update CI-M metadata in an existing ChromaDB collection from SQLite."""
+    ci_m_map = _load_ci_m_from_db()
+    if not ci_m_map:
+        return
+
+    # Skip if already backfilled (any entry has ci_m=1)
+    try:
+        sample = col.get(limit=1, where={"ci_m": 1}, include=["metadatas"])
+        if sample and sample.get("ids"):
+            return
+    except Exception:
+        pass
+
+    print(f"  Backfilling CI-M data for {len(ci_m_map)} courses...")
+    updated = 0
+    for code, ci_m_text in ci_m_map.items():
+        for variant in _code_variants(code):
+            try:
+                results = col.get(ids=[variant], include=["metadatas"])
+                if results["ids"]:
+                    meta = results["metadatas"][0]
+                    col.update(
+                        ids=[variant],
+                        metadatas=[{**meta, "ci_m": 1, "ci_m_majors": ci_m_text}],
+                    )
+                    updated += 1
+                    break
+            except Exception:
+                continue
+    print(f"  Backfilled CI-M: {updated}/{len(ci_m_map)} courses updated")
 
 
 def _parse_tags(raw) -> list[str]:
@@ -72,6 +128,8 @@ def _build_index(col):
     with open(MERGED_JSON, encoding="utf-8") as f:
         courses = json.load(f)
 
+    ci_m_map = _load_ci_m_from_db()
+
     documents, metadatas, ids = [], [], []
     seen_ids: set[str] = set()
 
@@ -86,9 +144,17 @@ def _build_index(col):
         description = course.get("description", "") or ""
         title = course.get("title", "") or ""
 
+        # CI-M: look up by exact code and common variants
+        ci_m_text = ""
+        for variant in _code_variants(code):
+            ci_m_text = ci_m_map.get(variant, "")
+            if ci_m_text:
+                break
+
         # Text to embed: rich concat for semantic coverage
+        ci_m_embed = f"CI-M {ci_m_text}" if ci_m_text else ""
         text = " | ".join(
-            p for p in [title, description, prereq, " ".join(tags)] if p
+            p for p in [title, description, prereq, " ".join(tags), ci_m_embed] if p
         ).strip()
         if not text:
             continue
@@ -106,12 +172,13 @@ def _build_index(col):
             "meeting_times_raw": course.get("meeting_times_raw", "") or "",
             "course_url": course.get("course_url", "") or "",
             # Boolean fields for GIR attribute filtering (exact match)
-            "ci_h":   int(any(t.upper() in ("CI-H", "CI-HW") for t in tags)),
-            "ci_m":   int(any(t.upper() == "CI-M"   for t in tags)),
-            "hass_h": int(any(t.upper() == "HASS-H" for t in tags)),
-            "hass_s": int(any(t.upper() == "HASS-S" for t in tags)),
-            "hass_a": int(any(t.upper() == "HASS-A" for t in tags)),
-            "rest":   int(any(t.upper() == "REST"   for t in tags)),
+            "ci_h":      int(any(t.upper() in ("CI-H", "CI-HW") for t in tags)),
+            "ci_m":      int(bool(ci_m_text)),
+            "ci_m_majors": ci_m_text,
+            "hass_h":    int(any(t.upper() == "HASS-H" for t in tags)),
+            "hass_s":    int(any(t.upper() == "HASS-S" for t in tags)),
+            "hass_a":    int(any(t.upper() == "HASS-A" for t in tags)),
+            "rest":      int(any(t.upper() == "REST"   for t in tags)),
         })
         ids.append(code)
 
@@ -184,16 +251,25 @@ def get_courses_by_code(codes: list[str]) -> list[dict]:
     return found
 
 
+def _ci_m_major_matches(ci_m_majors: str, major_code: str) -> bool:
+    """True if major_code appears as a token in the comma-separated ci_m_majors string."""
+    tokens = [t.strip() for t in ci_m_majors.split(",")]
+    return major_code.upper() in (t.upper() for t in tokens)
+
+
 def search_courses(
     query: str,
     n_results: int = 12,
     spring_only: bool = False,
     required_tags: list[str] | None = None,
+    ci_m_major: str | None = None,
 ) -> list[dict]:
     """Return top-n semantically similar courses for a natural-language query.
 
     required_tags: list of GIR attribute strings to hard-filter by,
                    e.g. ["CI-H"] or ["HASS-H"].
+    ci_m_major: if set, post-filter CI-M results to only those matching this
+                major code (e.g. "6-3"). Fetches extra candidates first.
     """
     col = get_collection()
 
@@ -212,9 +288,12 @@ def search_courses(
     elif len(conditions) > 1:
         where = {"$and": conditions}
 
+    # When filtering by CI-M major, fetch more candidates so post-filter has enough to work with
+    fetch_n = n_results * 4 if ci_m_major else n_results
+
     results = col.query(
         query_texts=[query],
-        n_results=min(n_results, col.count()),
+        n_results=min(fetch_n, col.count()),
         where=where,
         include=["documents", "metadatas", "distances"],
     )
@@ -222,4 +301,11 @@ def search_courses(
     out = []
     for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
         out.append({**meta, "similarity": round(1 - dist, 3)})
-    return out
+
+    if ci_m_major:
+        out = [
+            c for c in out
+            if _ci_m_major_matches(c.get("ci_m_majors", ""), ci_m_major)
+        ]
+
+    return out[:n_results]
