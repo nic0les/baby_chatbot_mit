@@ -182,57 +182,6 @@ export default function ScheduleGrid({
         </div>
       </div>
 
-      {/* Suggestion tray — all suggestions as cards */}
-      {suggestedCourses.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-dashed border-border">
-          <div
-            className={`${compact ? "text-[9px]" : "text-[10px]"} text-[#aaa] uppercase tracking-wider mb-2`}
-          >
-            Advisor Suggestions
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {suggestedCourses.map((course) => (
-              <div
-                key={course.id}
-                className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${compact ? "text-[9px]" : "text-[11px]"}`}
-                style={{
-                  borderColor: course.color + "60",
-                  backgroundColor: course.color + "10",
-                }}
-              >
-                <div>
-                  <span className="font-semibold" style={{ color: course.color }}>
-                    {course.id}
-                  </span>
-                  {!compact && (
-                    <span className="text-[#555] ml-1 max-w-[120px] truncate inline-block align-bottom">
-                      {course.name}
-                    </span>
-                  )}
-                  {course.startHour > 0 && (
-                    <span className="text-[#999] ml-1">
-                      {formatHourLabel(course.startHour)}
-                    </span>
-                  )}
-                  {course.startHour === 0 && (
-                    <span className="text-[#bbb] ml-1">TBA</span>
-                  )}
-                </div>
-                {onAddCourse && (
-                  <button
-                    onClick={() => onAddCourse(course.id)}
-                    className="w-5 h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold shrink-0 hover:opacity-80 transition-opacity"
-                    style={{ backgroundColor: course.color }}
-                    title={`Add ${course.id} to schedule`}
-                  >
-                    +
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

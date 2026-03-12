@@ -5,36 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { RequirementGroup, SubRequirement } from "../types";
 
 // ── Default mock data ──────────────────────────────────────────────────────────
-export const DEFAULT_REQUIREMENTS: RequirementGroup[] = [
-  {
-    id: "girs",
-    name: "General Institute Requirements",
-    color: "#E8A838",
-    subcategories: [
-      { name: "Science Core", completed: 1, total: 6 },
-      { name: "HASS", completed: 2, total: 8, note: "1 CI-H needed" },
-      { name: "REST", completed: 0, total: 2 },
-      { name: "Lab", completed: 0, total: 1 },
-    ],
-  },
-  {
-    id: "major",
-    name: "6-4 AI & Decision Making",
-    color: "#4A7FC1",
-    subcategories: [
-      { name: "Fundamentals", completed: 1, total: 4 },
-      {
-        name: "Header Courses",
-        completed: 0,
-        total: 5,
-        note: "5 from 5+ categories",
-      },
-      { name: "CI-M", completed: 0, total: 2 },
-      { name: "Ethics / SERC", completed: 1, total: 1 },
-      { name: "Electives", completed: 0, total: 3 },
-    ],
-  },
-];
+export const DEFAULT_REQUIREMENTS: RequirementGroup[] = [];
 
 // ── Helper ─────────────────────────────────────────────────────────────────────
 function groupTotal(group: RequirementGroup) {

@@ -14,6 +14,10 @@ from dotenv import load_dotenv
 
 load_dotenv()  # load HF_TOKEN from .env before importing src modules
 
+import json
+import os
+from datetime import datetime
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -75,3 +79,28 @@ def chat(req: ChatRequest):
         stream_chat(req.messages, req.profile, req.preferences),
         media_type="text/plain; charset=utf-8",
     )
+
+
+FEEDBACK_FILE = "data/feedback.jsonl"
+
+class FeedbackRequest(BaseModel):
+    rating: str          # "up" | "down"
+    message: str         # the assistant message content
+    user_message: str    # the user message that prompted it
+    profile: dict = {}
+
+
+@app.post("/feedback")
+def feedback(req: FeedbackRequest):
+    """Log thumbs-up/down feedback for a message. Appends to data/feedback.jsonl."""
+    os.makedirs("data", exist_ok=True)
+    entry = {
+        "ts": datetime.utcnow().isoformat(),
+        "rating": req.rating,
+        "user_message": req.user_message[:500],
+        "assistant_message": req.message[:1000],
+        "profile": req.profile,
+    }
+    with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+    return {"ok": True}

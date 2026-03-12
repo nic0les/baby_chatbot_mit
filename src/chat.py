@@ -12,7 +12,7 @@ from typing import Generator
 
 from huggingface_hub import InferenceClient
 
-from .embeddings import get_courses_by_code, search_courses
+from .embeddings import get_courses_by_code, search_courses, _code_variants
 from .web_search import is_old_course_number, search_mit
 
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -22,25 +22,58 @@ MODEL = "Qwen/Qwen3-8B"
 MAX_TOKENS = 8192
 
 SYSTEM_PROMPT = """\
-You are an MIT Course Advisor with access to the real MIT course catalog.
-Help students plan their schedule by:
-1. Respecting hard constraints: prerequisites, unit limits, GIR/major requirements not yet met, spring 2026 availability.
-2. Understanding soft preferences: interests, workload, time of day, class size.
-3. Recommending only courses that appear in the provided catalog context — never hallucinate course numbers or titles.
-4. The "tags:" field for each course is authoritative. If it says "tags: none", that course has NO GIR attributes — do NOT add CI-H, HASS, or REST based on your training data.
-   CI-M data IS present: courses that satisfy a CI-M requirement show "ci-m: <major codes>" in the catalog context. Use this to answer CI-M questions. Never claim a course is CI-M unless "ci-m:" appears explicitly in the provided context.
-   CI-M is major-specific: when the student's major is known, the catalog context is pre-filtered to CI-M courses valid for that major. If the student asks about CI-M for a different major (e.g. "for my friend in 6-2"), use the major they specified.
-5. Explaining clearly WHY each course fits the student's situation.
-6. Flagging uncertainty: if something isn't confirmed in the catalog data, say so.
+You are an MIT Course & Life Advisor. You help students with two complementary goals:
 
-Always cite course numbers (e.g., "6.3900 — Introduction to Machine Learning").
+## 1 — Course planning (catalog-grounded)
+- Recommend only courses appearing in the provided catalog context. Never invent course numbers or titles.
+- Respect hard constraints: prerequisites, unit limits (~54/semester), GIR/major requirements, spring 2026 availability.
+- Honor soft preferences: interests, workload, time-of-day, class size, career goals.
+- Tags are authoritative: "tags: none" means NO GIR attributes — do not add CI-H/HASS/REST from training data.
+  CI-M appears explicitly as "ci-m: <major codes>" — never claim CI-M unless it's in the context.
+- Explain clearly WHY each course fits the student's situation.
+- Always cite course numbers (e.g., "6.3900 — Introduction to Machine Learning").
+- Flag uncertainty: if something isn't confirmed in the catalog data, say so.
+
+## 2 — Time management & MIT life (advisory, clearly labeled as general guidance)
+When students ask about workload, scheduling, career, research, or MIT life, give practical, honest advice.
+Always label this as general guidance — not a guarantee — and encourage verification with their academic advisor.
+
+### Workload & time management
+- MIT units map directly to hours: 1 unit ≈ 1 hr/week. A 12-unit course takes ~12 hrs/week.
+  Rule of thumb: contact hours (lecture+recitation) + 2–3× for problem sets / projects.
+- Signs of overloading: taking >54 units, or stacking multiple "hard" courses (6.1210, 18.701, 8.03 etc.) in the same semester.
+- Strategies: front-load easy semesters, use IAP for lighter subjects, take 1 "exploration" course per semester.
+- If a student seems overloaded, flag it explicitly and suggest dropping to 4 courses (48 units).
+
+### Career advice (label as general guidance)
+- EECS (6-3, 6-4, 6-14) → strong pipelines to SWE, ML/AI, quant finance, hardware, startups.
+  Key courses for ML/AI: 6.3900, 6.7960, 6.C51; for systems: 6.1810, 6.5840; for theory: 6.1220, 6.5250.
+- Math/CS (18-C, 18-1) → academia, quant, cryptography, theory research.
+- Econ (14-1, 14-2, 6-14) → consulting, policy, fintech; 14.32, 14.13, 14.27 valued by employers.
+- For industry internships: highlight lab experience (6.UAT, UROP), project courses (6.1800, 6.S977).
+- For graduate school: research exposure matters more than GPA alone; aim for UROP by sophomore year.
+
+### Research & projects
+- UROP (Undergraduate Research Opportunities Program): available to all undergrads, any semester or summer.
+  Students earn credit (6.UR) or pay (~$15/hr). Best started after 2–3 semesters of foundational courses.
+  Finding a UROP: email professors whose papers interest you, check urop.mit.edu, attend lab open houses.
+- Project-based courses: 6.1800 (Computer Systems), 6.S977, 6.UAT, 6.9630 (MechE capstone).
+- SuperUROP (6.UAR): year-long advanced research, usually junior/senior year.
+
+### MIT life & balance
+- MIT is intense — it's normal to find courses hard. Office hours, study groups, and tutoring (Student Support Services) are essential.
+- Clubs and activities count: they build networks and skills. Joining 1–2 early is better than over-committing.
+- Mental health: MindHandHeart resources, S3 (Student Support Services), counseling at MIT Medical.
+- Pass/No Record (P/NR): freshmen get P/NR for all courses fall semester — a key time to explore.
+
+---
 
 MIT context:
 - GIRs: Science Core (6 subjects), HASS (8 incl. CI-H), REST (2), Lab (1)
-- Course numbering: 6.xxx = EECS, 18.xxx = Math, 8.xxx = Physics, 5.xxx = Chem, 7.xxx = Bio
+- Course numbering: 6.xxx = EECS, 18.xxx = Math, 8.xxx = Physics, 5.xxx = Chem, 7.xxx = Bio, 14.xxx = Economics
 - Attributes: CI-H, CI-M, HASS-H, HASS-S, HASS-A, REST
-- Units: typical course is 12 units (4-0-8 or similar); undergrad limit ~54/semester
-- Time slots: MWF or TR; 8-5 and EVE slots
+- Units: typical course = 12 units (4-0-8); undergrad limit ~54/semester
+- Time slots: MWF or TR; 8 AM–5 PM and evening slots
 
 MIT course renumbering (2022–2023): Course 6 switched from 3-digit to 4-digit numbers.
 Common mappings: 6.006→6.1210, 6.004→6.1910, 6.042→6.1200, 6.036→6.3900, 6.034→6.C51,
@@ -57,6 +90,45 @@ _TAG_PATTERNS = {
     "HASS-A": [r"\bhass-?as?\b"],
     "REST":   [r"\brest\b", r"\blab requirement\b"],
 }
+
+_TIME_PREF_PATTERNS = {
+    "morning":   [r"\bmorning\b", r"\bearly\b", r"\b(8|9|10|11)\s*am\b"],
+    "afternoon": [r"\bafternoon\b", r"\blunch\b", r"\b(1|2|3|4)\s*pm\b", r"\blate\b"],
+    "evening":   [r"\bevening\b", r"\bnight\b", r"\b(5|6|7)\s*pm\b"],
+}
+
+
+def _detect_time_pref(query: str) -> str | None:
+    """Return 'morning', 'afternoon', or 'evening' if user expresses a time preference."""
+    q = query.lower()
+    for pref, patterns in _TIME_PREF_PATTERNS.items():
+        if any(re.search(p, q) for p in patterns):
+            return pref
+    return None
+
+
+def _primary_time_slot(meeting_times_raw: str) -> float | None:
+    """Extract the first numeric time slot from a raw meeting time string.
+    MIT convention: 1–7 = PM (1pm–7pm), 8–12 = AM (8am–12pm).
+    Returns the slot number, or None if unparseable.
+    """
+    m = re.search(r"[MTWRF]+(\d+(?:\.\d+)?)", meeting_times_raw or "", re.IGNORECASE)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _time_matches_pref(meeting_times_raw: str, pref: str) -> bool:
+    slot = _primary_time_slot(meeting_times_raw)
+    if slot is None:
+        return False
+    if pref == "morning":
+        return slot >= 8  # 8am–12pm
+    if pref == "afternoon":
+        return 1 <= slot <= 4  # 1pm–4pm
+    if pref == "evening":
+        return 5 <= slot <= 7  # 5pm–7pm
+    return False
 
 # Matches MIT course codes: 6.3900, CMS.100, 21W.031, 6.S976, etc.
 _COURSE_CODE_RE = re.compile(
@@ -130,6 +202,7 @@ def _build_context(
     messages: list[dict],
     spring_only: bool = True,
     profile: dict | None = None,
+    completed_courses: list[str] | None = None,
 ) -> str:
     query, required_tags = _resolve_search_intent(messages)
 
@@ -143,6 +216,12 @@ def _build_context(
         profile_major = _profile_major_code(profile)
         ci_m_major = query_major or profile_major
 
+    # Normalize completed course codes for filtering
+    completed_set: set[str] = set()
+    for c in (completed_courses or []):
+        for variant in _code_variants(c):
+            completed_set.add(variant.upper())
+
     # Direct lookup for any course codes mentioned in the last 6 messages
     recent_text = " ".join(m["content"] for m in messages[-6:])
     explicit_codes = _extract_course_codes(recent_text)
@@ -152,10 +231,10 @@ def _build_context(
     found_codes = {c["subject_code"] for c in direct_courses}
     missing_codes = [c for c in explicit_codes if c not in found_codes]
 
-    # Semantic search
+    # Semantic search (fetch extra so we have room to filter + rerank)
     semantic_courses = search_courses(
         query,
-        n_results=12,
+        n_results=18,
         spring_only=spring_only,
         required_tags=required_tags or None,
         ci_m_major=ci_m_major,
@@ -168,6 +247,23 @@ def _build_context(
         if c["subject_code"] not in seen:
             seen.add(c["subject_code"])
             courses.append(c)
+
+    # Remove already-completed courses from recommendations
+    # (keep them if explicitly looked up by code — student may be asking about them)
+    explicit_upper = {e.upper() for e in explicit_codes}
+    courses = [
+        c for c in courses
+        if c["subject_code"].upper() not in completed_set
+        or c["subject_code"].upper() in explicit_upper
+    ]
+
+    # Detect time-of-day preference and rerank: matching courses bubble to top
+    time_pref = _detect_time_pref(query)
+    if time_pref:
+        courses.sort(
+            key=lambda c: 0 if _time_matches_pref(c.get("meeting_times_raw", ""), time_pref) else 1
+        )
+
     courses = courses[:14]
 
     # Web search fallback for missing codes or when catalog has no results
@@ -226,7 +322,9 @@ def stream_chat(
 
     client = InferenceClient(api_key=HF_TOKEN)
 
-    context = _build_context(messages, spring_only=True, profile=profile)
+    completed_courses: list[str] = (profile or {}).get("completed_courses", [])
+    context = _build_context(messages, spring_only=True, profile=profile,
+                             completed_courses=completed_courses)
 
     # Build profile preamble
     profile_parts = []
@@ -234,6 +332,9 @@ def stream_chat(
         for key in ("name", "year", "major"):
             if profile.get(key):
                 profile_parts.append(f"{key.capitalize()}: {profile[key]}")
+    if completed_courses:
+        # Summarize completed courses so LLM knows what prereqs are satisfied
+        profile_parts.append(f"Completed courses ({len(completed_courses)}): {', '.join(completed_courses[:40])}")
 
     system_sections = [SYSTEM_PROMPT]
     if profile_parts:

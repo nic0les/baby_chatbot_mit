@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, RotateCcw } from "lucide-react";
+import { ArrowUp, RotateCcw, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message, PrereqWarning } from "../types";
@@ -32,6 +32,8 @@ interface Props {
   prereqWarnings?: PrereqWarning[];
   courseMetadata?: Record<string, Record<string, string>>;
   completedCourses?: string[];
+  onFeedback?: (msgIndex: number, rating: "up" | "down") => void;
+  feedbackState?: Record<number, "up" | "down">;
 }
 
 function CourseTags({
@@ -110,12 +112,18 @@ function TypingIndicator() {
 
 function Bubble({
   msg,
+  msgIndex,
   courseMetadata,
   completedCourses,
+  onFeedback,
+  feedbackRating,
 }: {
   msg: Message;
+  msgIndex: number;
   courseMetadata?: Record<string, Record<string, string>>;
   completedCourses?: string[];
+  onFeedback?: (rating: "up" | "down") => void;
+  feedbackRating?: "up" | "down";
 }) {
   const isUser = msg.role === "user";
 
@@ -123,51 +131,83 @@ function Bubble({
     <div
       className={`msg-in flex ${isUser ? "justify-end" : "justify-start"} mb-3`}
     >
-      <div
-        className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed break-words ${
-          isUser
-            ? "bg-[#1c1c1c] text-white rounded-br-sm"
-            : "bg-surface border border-border text-[#1c1c1c] rounded-bl-sm prose prose-sm max-w-none"
-        }`}
-        style={{
-          boxShadow: isUser ? "none" : "0 1px 2px rgba(0,0,0,0.04)",
-        }}
-      >
-        {isUser ? (
-          msg.content
-        ) : (
-          <>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                h1: ({ children }) => <h1 className="font-semibold text-[14px] mb-1 mt-2">{children}</h1>,
-                h2: ({ children }) => <h2 className="font-semibold text-[13px] mb-1 mt-2">{children}</h2>,
-                h3: ({ children }) => <h3 className="font-semibold text-[13px] mb-1 mt-2">{children}</h3>,
-                ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-                ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
-                li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                em: ({ children }) => <em className="italic">{children}</em>,
-                code: ({ children }) => (
-                  <code className="bg-bg px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
-                ),
-                hr: () => <hr className="border-border my-2" />,
-                a: ({ href, children }) => (
-                  <a href={href} className="text-[#A31F34] underline" target="_blank" rel="noreferrer">{children}</a>
-                ),
-              }}
+      <div className={`max-w-[85%] flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}>
+        <div
+          className={`rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed break-words ${
+            isUser
+              ? "bg-[#1c1c1c] text-white rounded-br-sm"
+              : "bg-surface border border-border text-[#1c1c1c] rounded-bl-sm prose prose-sm max-w-none"
+          }`}
+          style={{
+            boxShadow: isUser ? "none" : "0 1px 2px rgba(0,0,0,0.04)",
+          }}
+        >
+          {isUser ? (
+            msg.content
+          ) : (
+            <>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                  h1: ({ children }) => <h1 className="font-semibold text-[14px] mb-1 mt-2">{children}</h1>,
+                  h2: ({ children }) => <h2 className="font-semibold text-[13px] mb-1 mt-2">{children}</h2>,
+                  h3: ({ children }) => <h3 className="font-semibold text-[13px] mb-1 mt-2">{children}</h3>,
+                  ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+                  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                  em: ({ children }) => <em className="italic">{children}</em>,
+                  code: ({ children }) => (
+                    <code className="bg-bg px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
+                  ),
+                  hr: () => <hr className="border-border my-2" />,
+                  a: ({ href, children }) => (
+                    <a href={href} className="text-[#A31F34] underline" target="_blank" rel="noreferrer">{children}</a>
+                  ),
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+              {courseMetadata && completedCourses !== undefined && (
+                <CourseTags
+                  content={msg.content}
+                  courseMetadata={courseMetadata}
+                  completedCourses={completedCourses}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Feedback buttons — only on assistant messages, not the welcome message */}
+        {!isUser && onFeedback && msgIndex > 0 && (
+          <div className="flex items-center gap-0.5 px-1">
+            <button
+              onClick={() => onFeedback("up")}
+              title="Helpful"
+              className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border transition-colors ${
+                feedbackRating === "up"
+                  ? "border-[#2D7A4F] bg-[#2D7A4F10] text-[#2D7A4F]"
+                  : "border-border text-[#888] hover:border-[#2D7A4F] hover:text-[#2D7A4F]"
+              }`}
             >
-              {msg.content}
-            </ReactMarkdown>
-            {courseMetadata && completedCourses !== undefined && (
-              <CourseTags
-                content={msg.content}
-                courseMetadata={courseMetadata}
-                completedCourses={completedCourses}
-              />
-            )}
-          </>
+              <ThumbsUp size={11} />
+              <span>Helpful</span>
+            </button>
+            <button
+              onClick={() => onFeedback("down")}
+              title="Not helpful"
+              className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border transition-colors ${
+                feedbackRating === "down"
+                  ? "border-[#A31F34] bg-[#A31F3410] text-[#A31F34]"
+                  : "border-border text-[#888] hover:border-[#A31F34] hover:text-[#A31F34]"
+              }`}
+            >
+              <ThumbsDown size={11} />
+              <span>Not helpful</span>
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -182,6 +222,8 @@ export default function ChatPanel({
   prereqWarnings = [],
   courseMetadata = {},
   completedCourses = [],
+  onFeedback,
+  feedbackState = {},
 }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -244,8 +286,11 @@ export default function ChatPanel({
           <Bubble
             key={i}
             msg={msg}
+            msgIndex={i}
             courseMetadata={courseMetadata}
             completedCourses={completedCourses}
+            onFeedback={onFeedback ? (rating) => onFeedback(i, rating) : undefined}
+            feedbackRating={feedbackState[i]}
           />
         ))}
         {prereqWarnings.length > 0 && (
