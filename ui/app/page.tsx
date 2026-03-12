@@ -6,7 +6,8 @@ import Sidebar from "./components/Sidebar";
 import RequirementsPanel, {
   DEFAULT_REQUIREMENTS,
 } from "./components/RequirementsPanel";
-import ScheduleGrid, { DEFAULT_SCHEDULE } from "./components/ScheduleGrid";
+import ScheduleGrid from "./components/ScheduleGrid";
+import { parseMeetingTimes } from "./utils/parseMeetingTimes";
 import ChatPanel from "./components/ChatPanel";
 import FullscreenModal from "./components/FullscreenModal";
 import PreferencesPanel from "./components/PreferencesPanel";
@@ -197,7 +198,8 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [requirements, setRequirements] =
     useState<RequirementGroup[]>(DEFAULT_REQUIREMENTS);
-  const [schedule, setSchedule] = useState<CourseBlock[]>(DEFAULT_SCHEDULE);
+  const [schedule, setSchedule] = useState<CourseBlock[]>([]);
+  const [suggestedCourses, setSuggestedCourses] = useState<CourseBlock[]>([]);
   const [fullscreen, setFullscreen] = useState<
     "requirements" | "schedule" | null
   >(null);
@@ -213,6 +215,55 @@ export default function Home() {
   const [preferences, setPreferences] = useState<Preferences>({ prioritize: [], avoid: [] });
 
   const COURSE_REGEX = /\b(\d+\.[A-Z0-9]+[A-Za-z]?)\b/g;
+
+  const PALETTE = ["#4A7FC1", "#4E9E6E", "#9171C7", "#C97B4B", "#C1496A", "#5BA3A0"];
+  function colorForCode(code: string): string {
+    let hash = 0;
+    for (const ch of code) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffffffff;
+    return PALETTE[Math.abs(hash) % PALETTE.length];
+  }
+  function parseUnits(u: string): number {
+    if (!u) return 0;
+    const parts = u.split("-");
+    if (parts.length === 3) return parts.reduce((s, p) => s + (parseInt(p) || 0), 0);
+    return parseInt(u) || 0;
+  }
+
+  async function fetchSuggestedCourses(codes: string[]) {
+    const results = await Promise.all(
+      codes.map(async (code) => {
+        try {
+          const res = await fetch(`/api/prereqs/${encodeURIComponent(code)}`);
+          const courses = (await res.json()) as Record<string, string>[];
+          if (!courses.length) return null;
+          return { code, meta: courses[0] };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const alreadyInSchedule = new Set(schedule.map((c) => c.id.toUpperCase()));
+    const suggested: CourseBlock[] = [];
+
+    for (const result of results.filter(Boolean) as { code: string; meta: Record<string, string> }[]) {
+      const { code, meta } = result;
+      if (alreadyInSchedule.has(code.toUpperCase())) continue;
+      const times = parseMeetingTimes(meta.meeting_times_raw || "");
+      const primary = times[0];
+      suggested.push({
+        id: code,
+        name: meta.title || code,
+        days: primary?.days ?? [],
+        startHour: primary?.startHour ?? 0,
+        endHour: primary?.endHour ?? 0,
+        color: colorForCode(code),
+        units: parseUnits(meta.units || "0"),
+      });
+    }
+
+    setSuggestedCourses(suggested);
+  }
 
   async function checkPrereqs(text: string) {
     if (!completedCoursesRef.current.length) return;
@@ -309,9 +360,14 @@ export default function Home() {
       if (!started) {
         setMessages([...next, { role: "assistant", content: "No response received.", timestamp: new Date() }]);
       } else {
-        // Post-stream: check prereqs + fetch course metadata
+        // Post-stream: check prereqs, fetch metadata, build suggestions
         setPrereqWarnings([]);
-        await Promise.all([checkPrereqs(fullContent), fetchCourseMetadata(content)]);
+        const suggestedCodes = [...new Set([...fullContent.matchAll(COURSE_REGEX)].map((m) => m[1]))];
+        await Promise.all([
+          checkPrereqs(fullContent),
+          fetchCourseMetadata(content),
+          fetchSuggestedCourses(suggestedCodes),
+        ]);
       }
     } catch {
       setMessages([
@@ -367,6 +423,14 @@ export default function Home() {
     </label>
   );
 
+  // ── Add suggested course to confirmed schedule ────────────────────────────────
+  function handleAddCourse(id: string) {
+    const course = suggestedCourses.find((c) => c.id === id);
+    if (!course) return;
+    setSchedule((prev) => [...prev, course]);
+    setSuggestedCourses((prev) => prev.filter((c) => c.id !== id));
+  }
+
   // ── View content ─────────────────────────────────────────────────────────────
   const sharedScrollArea = "flex-1 flex flex-col overflow-y-auto p-5 gap-4 min-w-0";
 
@@ -387,7 +451,11 @@ export default function Home() {
                 <UnitsBadge courses={schedule} />
               </div>
               <div className="flex-1 overflow-auto p-4">
-                <ScheduleGrid courses={schedule} />
+                <ScheduleGrid
+                  courses={schedule}
+                  suggestedCourses={suggestedCourses}
+                  onAddCourse={handleAddCourse}
+                />
               </div>
             </div>
           </div>
@@ -456,7 +524,12 @@ export default function Home() {
                 onExpand={() => setFullscreen("schedule")}
                 action={<UnitsBadge courses={schedule} />}
               >
-                <ScheduleGrid courses={schedule} compact />
+                <ScheduleGrid
+                  courses={schedule}
+                  compact
+                  suggestedCourses={suggestedCourses}
+                  onAddCourse={handleAddCourse}
+                />
                 <div className="mt-3">
                   <UnitLoadBar courses={schedule} />
                 </div>
@@ -505,7 +578,11 @@ export default function Home() {
       )}
       {fullscreen === "schedule" && (
         <FullscreenModal title="Weekly Schedule" onClose={() => setFullscreen(null)}>
-          <ScheduleGrid courses={schedule} />
+          <ScheduleGrid
+            courses={schedule}
+            suggestedCourses={suggestedCourses}
+            onAddCourse={handleAddCourse}
+          />
         </FullscreenModal>
       )}
     </div>

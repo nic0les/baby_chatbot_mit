@@ -1,37 +1,9 @@
 "use client";
 
 import type { CourseBlock, Day } from "../types";
+import { formatHourLabel } from "../utils/parseMeetingTimes";
 
-// ── Mock data ──────────────────────────────────────────────────────────────────
-export const DEFAULT_SCHEDULE: CourseBlock[] = [
-  {
-    id: "6.3900",
-    name: "Intro to Machine Learning",
-    days: ["Mon", "Wed", "Fri"],
-    startHour: 10.5,
-    endHour: 11.5,
-    color: "#4A7FC1",
-    units: 12,
-  },
-  {
-    id: "18.404",
-    name: "Theory of Computation",
-    days: ["Tue", "Thu"],
-    startHour: 13,
-    endHour: 14.5,
-    color: "#4E9E6E",
-    units: 12,
-  },
-  {
-    id: "15.310",
-    name: "People, Teams & Organizations",
-    days: ["Mon", "Wed"],
-    startHour: 14,
-    endHour: 15.5,
-    color: "#9171C7",
-    units: 9,
-  },
-];
+export const DEFAULT_SCHEDULE: CourseBlock[] = [];
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const SCHEDULE_START = 8;
@@ -45,24 +17,19 @@ const DAY_LABELS: Record<Day, string> = {
   Fri: "Friday",
 };
 
-function formatHour(h: number): string {
-  const hours = Math.floor(h);
-  const mins = Math.round((h - hours) * 60);
-  const ampm = hours >= 12 ? "PM" : "AM";
-  const h12 = hours > 12 ? hours - 12 : hours;
-  if (mins === 0) return `${h12} ${ampm}`;
-  return `${h12}:${mins.toString().padStart(2, "0")} ${ampm}`;
-}
-
 // ── Grid ───────────────────────────────────────────────────────────────────────
 interface Props {
   courses?: CourseBlock[];
   compact?: boolean;
+  suggestedCourses?: CourseBlock[];
+  onAddCourse?: (id: string) => void;
 }
 
 export default function ScheduleGrid({
-  courses = DEFAULT_SCHEDULE,
+  courses = [],
   compact = false,
+  suggestedCourses = [],
+  onAddCourse,
 }: Props) {
   const pxPerHour = compact ? 28 : 56;
   const totalHours = SCHEDULE_END - SCHEDULE_START;
@@ -77,6 +44,11 @@ export default function ScheduleGrid({
   function height(start: number, end: number) {
     return (end - start) * pxPerHour;
   }
+
+  // Suggestions that have valid parsed meeting times
+  const scheduledSuggestions = suggestedCourses.filter((c) => c.days.length > 0 && c.startHour > 0);
+  // Suggestions without times (TBA) — only show in tray
+  const unscheduledSuggestions = suggestedCourses.filter((c) => !c.days.length || c.startHour === 0);
 
   return (
     <div className="w-full overflow-auto">
@@ -107,14 +79,14 @@ export default function ScheduleGrid({
           {hours.map((h) => (
             <div
               key={h}
-              className={`absolute right-2 text-right leading-none`}
+              className="absolute right-2 text-right leading-none"
               style={{
                 top: top(h) - 6,
                 fontSize: compact ? 9 : 10,
                 color: "var(--muted)",
               }}
             >
-              {formatHour(h)}
+              {formatHourLabel(h)}
             </div>
           ))}
         </div>
@@ -122,17 +94,14 @@ export default function ScheduleGrid({
         {/* Day columns */}
         <div className="flex flex-1 relative" style={{ height: totalHeight }}>
           {/* Horizontal hour lines */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-          >
+          <div className="absolute inset-0 pointer-events-none">
             {hours.map((h) => (
               <div
                 key={h}
                 className="absolute w-full border-t"
                 style={{
                   top: top(h),
-                  borderColor:
-                    h % 2 === 0 ? "var(--border)" : "rgba(229,226,220,0.4)",
+                  borderColor: h % 2 === 0 ? "var(--border)" : "rgba(229,226,220,0.4)",
                 }}
               />
             ))}
@@ -140,12 +109,14 @@ export default function ScheduleGrid({
 
           {DAYS.map((day) => {
             const dayCourses = courses.filter((c) => c.days.includes(day));
+            const daySuggested = scheduledSuggestions.filter((c) => c.days.includes(day));
             return (
               <div
                 key={day}
                 className="flex-1 relative border-l border-border"
                 style={{ height: totalHeight }}
               >
+                {/* Confirmed course blocks */}
                 {dayCourses.map((course) => {
                   const h = height(course.startHour, course.endHour);
                   const t = top(course.startHour);
@@ -158,6 +129,7 @@ export default function ScheduleGrid({
                         top: t + 1,
                         height: Math.max(h - 2, minH),
                         backgroundColor: course.color,
+                        zIndex: 2,
                       }}
                       title={`${course.id} — ${course.name}`}
                     >
@@ -166,9 +138,39 @@ export default function ScheduleGrid({
                       >
                         <div className="font-semibold truncate">{course.id}</div>
                         {!compact && (
-                          <div className="opacity-80 truncate text-[10px]">
-                            {course.name}
-                          </div>
+                          <div className="opacity-80 truncate text-[10px]">{course.name}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Ghost blocks for suggested courses with known times */}
+                {daySuggested.map((course) => {
+                  const h = height(course.startHour, course.endHour);
+                  const t = top(course.startHour);
+                  const minH = compact ? 14 : 20;
+                  return (
+                    <div
+                      key={`sug-${course.id}`}
+                      className="absolute left-[2px] right-[2px] rounded overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        top: t + 1,
+                        height: Math.max(h - 2, minH),
+                        backgroundColor: course.color + "28",
+                        border: `1.5px dashed ${course.color}`,
+                        zIndex: 1,
+                      }}
+                      title={`Add ${course.id} — ${course.name}`}
+                      onClick={() => onAddCourse?.(course.id)}
+                    >
+                      <div
+                        className={`px-1.5 py-1 leading-tight ${compact ? "text-[9px]" : "text-[11px]"}`}
+                        style={{ color: course.color }}
+                      >
+                        <div className="font-semibold truncate">+ {course.id}</div>
+                        {!compact && (
+                          <div className="opacity-70 truncate text-[10px]">{course.name}</div>
                         )}
                       </div>
                     </div>
@@ -179,6 +181,58 @@ export default function ScheduleGrid({
           })}
         </div>
       </div>
+
+      {/* Suggestion tray — all suggestions as cards */}
+      {suggestedCourses.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-dashed border-border">
+          <div
+            className={`${compact ? "text-[9px]" : "text-[10px]"} text-[#aaa] uppercase tracking-wider mb-2`}
+          >
+            Advisor Suggestions
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {suggestedCourses.map((course) => (
+              <div
+                key={course.id}
+                className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${compact ? "text-[9px]" : "text-[11px]"}`}
+                style={{
+                  borderColor: course.color + "60",
+                  backgroundColor: course.color + "10",
+                }}
+              >
+                <div>
+                  <span className="font-semibold" style={{ color: course.color }}>
+                    {course.id}
+                  </span>
+                  {!compact && (
+                    <span className="text-[#555] ml-1 max-w-[120px] truncate inline-block align-bottom">
+                      {course.name}
+                    </span>
+                  )}
+                  {course.startHour > 0 && (
+                    <span className="text-[#999] ml-1">
+                      {formatHourLabel(course.startHour)}
+                    </span>
+                  )}
+                  {course.startHour === 0 && (
+                    <span className="text-[#bbb] ml-1">TBA</span>
+                  )}
+                </div>
+                {onAddCourse && (
+                  <button
+                    onClick={() => onAddCourse(course.id)}
+                    className="w-5 h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold shrink-0 hover:opacity-80 transition-opacity"
+                    style={{ backgroundColor: course.color }}
+                    title={`Add ${course.id} to schedule`}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
