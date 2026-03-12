@@ -2,6 +2,9 @@ venv/
 data/chroma/
 __pycache__/
 .env
+.env.local
+.env.*.local
+ui/.env.local
 *.pyc
 .ipynb_checkpoints/
 models/
