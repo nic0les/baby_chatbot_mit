@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Maximize2, Upload } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import RequirementsPanel, {
@@ -9,11 +9,15 @@ import RequirementsPanel, {
 import ScheduleGrid, { DEFAULT_SCHEDULE } from "./components/ScheduleGrid";
 import ChatPanel from "./components/ChatPanel";
 import FullscreenModal from "./components/FullscreenModal";
+import PreferencesPanel from "./components/PreferencesPanel";
+import UnitLoadBar from "./components/UnitLoadBar";
 import type {
   Message,
   RequirementGroup,
   CourseBlock,
   StudentProfile,
+  PrereqWarning,
+  Preferences,
 } from "./types";
 
 const YEARS = ["Freshman", "Sophomore", "Junior", "Senior", "MEng"] as const;
@@ -202,6 +206,61 @@ export default function Home() {
     year: "Junior",
     major: "6-4",
   });
+  const [completedCourses, setCompletedCourses] = useState<string[]>([]);
+  const completedCoursesRef = useRef<string[]>([]);
+  const [prereqWarnings, setPrereqWarnings] = useState<PrereqWarning[]>([]);
+  const [courseMetadata, setCourseMetadata] = useState<Record<string, Record<string, string>>>({});
+  const [preferences, setPreferences] = useState<Preferences>({ prioritize: [], avoid: [] });
+
+  const COURSE_REGEX = /\b(\d+\.[A-Z0-9]+[A-Za-z]?)\b/g;
+
+  async function checkPrereqs(text: string) {
+    if (!completedCoursesRef.current.length) return;
+    const codes = [...new Set([...text.matchAll(COURSE_REGEX)].map((m) => m[1]))];
+    if (!codes.length) return;
+
+    const results = await Promise.all(
+      codes.map(async (code) => {
+        try {
+          const res = await fetch(`/api/prereqs/${encodeURIComponent(code)}`);
+          const courses = (await res.json()) as Record<string, string>[];
+          if (!courses.length) return null;
+          const prereqText = courses[0].prereq_text || "";
+          if (!prereqText || prereqText === "None") return null;
+          const prereqCodes = [
+            ...new Set([...prereqText.matchAll(COURSE_REGEX)].map((m) => m[1])),
+          ];
+          const unmet = prereqCodes.filter(
+            (p) =>
+              !completedCoursesRef.current.some(
+                (c) => c.toUpperCase() === p.toUpperCase()
+              )
+          );
+          return unmet.length ? { code, unmet } : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    const warnings = results.filter(Boolean) as PrereqWarning[];
+    setPrereqWarnings(warnings);
+  }
+
+  async function fetchCourseMetadata(query: string) {
+    try {
+      const res = await fetch(
+        `/api/search?q=${encodeURIComponent(query)}&n=20`
+      );
+      const courses = (await res.json()) as Record<string, string>[];
+      const meta: Record<string, Record<string, string>> = {};
+      for (const c of courses) {
+        if (c.subject_code) meta[c.subject_code] = c;
+      }
+      setCourseMetadata((prev) => ({ ...prev, ...meta }));
+    } catch {
+      // best-effort
+    }
+  }
 
   // ── Chat send (streaming) ────────────────────────────────────────────────────
   async function handleSend(content: string) {
@@ -214,7 +273,7 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, profile }),
+        body: JSON.stringify({ messages: next, profile, preferences }),
       });
 
       // Non-streaming error response (backend offline, etc.)
@@ -248,8 +307,11 @@ export default function Home() {
       }
 
       if (!started) {
-        // Stream was empty
         setMessages([...next, { role: "assistant", content: "No response received.", timestamp: new Date() }]);
+      } else {
+        // Post-stream: check prereqs + fetch course metadata
+        setPrereqWarnings([]);
+        await Promise.all([checkPrereqs(fullContent), fetchCourseMetadata(content)]);
       }
     } catch {
       setMessages([
@@ -271,6 +333,9 @@ export default function Home() {
         const data = JSON.parse(ev.target?.result as string);
         const subjects: Array<{ subject_id: string; title: string; semester: number }> =
           data.selectedSubjects ?? [];
+        const codes = subjects.map((s) => s.subject_id);
+        setCompletedCourses(codes);
+        completedCoursesRef.current = codes;
         const summary = subjects
           .map((s) => `${s.subject_id} (${s.title}, sem ${s.semester})`)
           .join(", ");
@@ -362,6 +427,9 @@ export default function Home() {
                 onSend={handleSend}
                 onReset={() => setMessages([])}
                 isLoading={isLoading}
+                prereqWarnings={prereqWarnings}
+                courseMetadata={courseMetadata}
+                completedCourses={completedCourses}
               />
             </div>
           </div>
@@ -389,15 +457,32 @@ export default function Home() {
                 action={<UnitsBadge courses={schedule} />}
               >
                 <ScheduleGrid courses={schedule} compact />
+                <div className="mt-3">
+                  <UnitLoadBar courses={schedule} />
+                </div>
+              </PanelCard>
+
+              <PanelCard
+                title="My Preferences"
+                subtitle="Courses & constraints for the advisor"
+                onExpand={() => {}}
+              >
+                <PreferencesPanel
+                  preferences={preferences}
+                  onChange={setPreferences}
+                />
               </PanelCard>
             </div>
 
-            <div className="w-[380px] shrink-0 flex flex-col overflow-hidden">
+            <div className="w-[380px] shrink-0 flex flex-col overflow-hidden gap-0">
               <ChatPanel
                 messages={messages}
                 onSend={handleSend}
                 onReset={() => setMessages([])}
                 isLoading={isLoading}
+                prereqWarnings={prereqWarnings}
+                courseMetadata={courseMetadata}
+                completedCourses={completedCourses}
               />
             </div>
           </>

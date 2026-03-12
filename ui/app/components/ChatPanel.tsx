@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUp, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Message } from "../types";
+import type { Message, PrereqWarning } from "../types";
 
 const WELCOME: Message = {
   role: "assistant",
@@ -13,11 +13,86 @@ const WELCOME: Message = {
   timestamp: new Date(),
 };
 
+const COURSE_CODE_RE = /\b(\d+\.[A-Z0-9]+[A-Za-z]?)\b/g;
+
+const GIR_TAG_COLORS: Record<string, string> = {
+  "CI-H": "#A31F34",
+  "CI-M": "#A31F34",
+  "HASS-H": "#7B4EA6",
+  "HASS-S": "#1B6B8A",
+  "HASS-A": "#2D7A4F",
+  REST: "#B8660A",
+};
+
 interface Props {
   messages: Message[];
   onSend: (content: string) => void;
   onReset: () => void;
   isLoading: boolean;
+  prereqWarnings?: PrereqWarning[];
+  courseMetadata?: Record<string, Record<string, string>>;
+  completedCourses?: string[];
+}
+
+function CourseTags({
+  content,
+  courseMetadata,
+  completedCourses,
+}: {
+  content: string;
+  courseMetadata: Record<string, Record<string, string>>;
+  completedCourses: string[];
+}) {
+  const codes = [...new Set([...content.matchAll(COURSE_CODE_RE)].map((m) => m[1]))];
+  const tagged = codes
+    .map((code) => {
+      const meta = courseMetadata[code];
+      if (!meta) return null;
+      const tags: { label: string; color: string }[] = [];
+      const reqTags: string = meta.requirement_tags || "";
+      for (const [tag, color] of Object.entries(GIR_TAG_COLORS)) {
+        if (reqTags.includes(tag)) tags.push({ label: tag, color });
+      }
+      const times: string = meta.meeting_times_raw || "";
+      if (/\b(1[2-9]|[2-4])\b/.test(times)) tags.push({ label: "afternoon", color: "#555" });
+      const prereqText: string = meta.prereq_text || "";
+      if (prereqText && prereqText !== "None") {
+        const prereqCodes = [...prereqText.matchAll(COURSE_CODE_RE)].map((m) => m[1]);
+        const allMet = prereqCodes.every((p) =>
+          completedCourses.some((c) => c.toUpperCase() === p.toUpperCase())
+        );
+        if (completedCourses.length > 0) {
+          tags.push(
+            allMet
+              ? { label: "prereqs met", color: "#2D7A4F" }
+              : { label: "check prereqs", color: "#B8660A" }
+          );
+        }
+      }
+      if (!tags.length) return null;
+      return { code, tags };
+    })
+    .filter(Boolean) as { code: string; tags: { label: string; color: string }[] }[];
+
+  if (!tagged.length) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {tagged.map(({ code, tags }) => (
+        <div key={code} className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] font-mono font-medium text-[#555]">{code}</span>
+          {tags.map(({ label, color }) => (
+            <span
+              key={label}
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ backgroundColor: `${color}18`, color }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function TypingIndicator() {
@@ -33,7 +108,15 @@ function TypingIndicator() {
   );
 }
 
-function Bubble({ msg }: { msg: Message }) {
+function Bubble({
+  msg,
+  courseMetadata,
+  completedCourses,
+}: {
+  msg: Message;
+  courseMetadata?: Record<string, Record<string, string>>;
+  completedCourses?: string[];
+}) {
   const isUser = msg.role === "user";
 
   return (
@@ -53,36 +136,53 @@ function Bubble({ msg }: { msg: Message }) {
         {isUser ? (
           msg.content
         ) : (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-              h1: ({ children }) => <h1 className="font-semibold text-[14px] mb-1 mt-2">{children}</h1>,
-              h2: ({ children }) => <h2 className="font-semibold text-[13px] mb-1 mt-2">{children}</h2>,
-              h3: ({ children }) => <h3 className="font-semibold text-[13px] mb-1 mt-2">{children}</h3>,
-              ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-              ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
-              li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-              em: ({ children }) => <em className="italic">{children}</em>,
-              code: ({ children }) => (
-                <code className="bg-bg px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
-              ),
-              hr: () => <hr className="border-border my-2" />,
-              a: ({ href, children }) => (
-                <a href={href} className="text-[#A31F34] underline" target="_blank" rel="noreferrer">{children}</a>
-              ),
-            }}
-          >
-            {msg.content}
-          </ReactMarkdown>
+          <>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                h1: ({ children }) => <h1 className="font-semibold text-[14px] mb-1 mt-2">{children}</h1>,
+                h2: ({ children }) => <h2 className="font-semibold text-[13px] mb-1 mt-2">{children}</h2>,
+                h3: ({ children }) => <h3 className="font-semibold text-[13px] mb-1 mt-2">{children}</h3>,
+                ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+                li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                code: ({ children }) => (
+                  <code className="bg-bg px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
+                ),
+                hr: () => <hr className="border-border my-2" />,
+                a: ({ href, children }) => (
+                  <a href={href} className="text-[#A31F34] underline" target="_blank" rel="noreferrer">{children}</a>
+                ),
+              }}
+            >
+              {msg.content}
+            </ReactMarkdown>
+            {courseMetadata && completedCourses !== undefined && (
+              <CourseTags
+                content={msg.content}
+                courseMetadata={courseMetadata}
+                completedCourses={completedCourses}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-export default function ChatPanel({ messages, onSend, onReset, isLoading }: Props) {
+export default function ChatPanel({
+  messages,
+  onSend,
+  onReset,
+  isLoading,
+  prereqWarnings = [],
+  courseMetadata = {},
+  completedCourses = [],
+}: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -141,8 +241,36 @@ export default function ChatPanel({ messages, onSend, onReset, isLoading }: Prop
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {allMessages.map((msg, i) => (
-          <Bubble key={i} msg={msg} />
+          <Bubble
+            key={i}
+            msg={msg}
+            courseMetadata={courseMetadata}
+            completedCourses={completedCourses}
+          />
         ))}
+        {prereqWarnings.length > 0 && (
+          <div
+            className="mb-3 rounded-xl border px-3.5 py-2.5 text-[12px]"
+            style={{
+              borderColor: "#B8660A40",
+              backgroundColor: "#B8660A0A",
+              color: "#7A4500",
+            }}
+          >
+            <div className="font-semibold mb-1">Prerequisite check</div>
+            {prereqWarnings.map(({ code, unmet }) => (
+              <div key={code}>
+                <span className="font-mono">{code}</span> may require:{" "}
+                {unmet.map((u) => (
+                  <span key={u} className="font-mono font-medium">{u} </span>
+                ))}
+              </div>
+            ))}
+            <div className="mt-1 text-[11px] opacity-70">
+              Upload your CourseRoad to get personalized prereq checks.
+            </div>
+          </div>
+        )}
         {isLoading && (
           <div className="msg-in flex justify-start mb-3">
             <div className="bg-surface border border-border rounded-xl rounded-bl-sm">

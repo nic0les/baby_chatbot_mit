@@ -36,3 +36,13 @@ export interface StudentProfile {
   year: "Freshman" | "Sophomore" | "Junior" | "Senior" | "MEng";
   major: string;
 }
+
+export interface PrereqWarning {
+  code: string;
+  unmet: string[];
+}
+
+export interface Preferences {
+  prioritize: string[];
+  avoid: string[];
+}
