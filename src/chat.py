@@ -214,6 +214,7 @@ def _strip_thinking(text: str) -> str:
 def stream_chat(
     messages: list[dict],
     profile: dict | None = None,
+    preferences: dict | None = None,
 ) -> Generator[str, None, None]:
     """
     Generator yielding text chunks from Qwen3-8B.
@@ -237,6 +238,14 @@ def stream_chat(
     system_sections = [SYSTEM_PROMPT]
     if profile_parts:
         system_sections.append("## Student profile\n" + " | ".join(profile_parts))
+    if preferences:
+        pref_parts = []
+        if preferences.get("prioritize"):
+            pref_parts.append("Prioritize: " + ", ".join(preferences["prioritize"]))
+        if preferences.get("avoid"):
+            pref_parts.append("Avoid: " + ", ".join(preferences["avoid"]))
+        if pref_parts:
+            system_sections.append("## Student preferences\n" + "\n".join(pref_parts))
     if context:
         system_sections.append(context)
 

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.embeddings import get_collection, search_courses
+from src.embeddings import get_collection, search_courses, get_courses_by_code
 from src.chat import stream_chat
 
 app = FastAPI(title="MIT Course Advisor API", version="0.1.0")
@@ -56,15 +56,22 @@ def query(
     return search_courses(q, n_results=n, spring_only=spring_only)
 
 
+@app.get("/prereqs/{code}")
+def get_prereqs(code: str):
+    """Return metadata (including prereq_text) for a specific course code."""
+    return get_courses_by_code([code])
+
+
 class ChatRequest(BaseModel):
     messages: list[dict]
     profile: dict = {}
+    preferences: dict = {}
 
 
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Streaming chat endpoint. Returns plain-text chunks as they're generated."""
     return StreamingResponse(
-        stream_chat(req.messages, req.profile),
+        stream_chat(req.messages, req.profile, req.preferences),
         media_type="text/plain; charset=utf-8",
     )
