@@ -33,6 +33,7 @@ You are an MIT Course & Life Advisor. You help students with two complementary g
 - Explain clearly WHY each course fits the student's situation.
 - Always cite course numbers (e.g., "6.3900 — Introduction to Machine Learning").
 - Flag uncertainty: if something isn't confirmed in the catalog data, say so.
+- NEVER recommend a course that appears in the student's "Completed courses" list. They have already taken it.
 
 ## 2 — Time management & MIT life (advisory, clearly labeled as general guidance)
 When students ask about workload, scheduling, career, research, or MIT life, give practical, honest advice.
@@ -335,6 +336,12 @@ def stream_chat(
     if completed_courses:
         # Summarize completed courses so LLM knows what prereqs are satisfied
         profile_parts.append(f"Completed courses ({len(completed_courses)}): {', '.join(completed_courses[:40])}")
+    liked = (profile or {}).get("liked_courses", [])
+    disliked = (profile or {}).get("disliked_courses", [])
+    if liked:
+        profile_parts.append(f"Liked courses (recommend similar): {', '.join(liked)}")
+    if disliked:
+        profile_parts.append(f"Disliked courses (avoid similar): {', '.join(disliked)}")
 
     system_sections = [SYSTEM_PROMPT]
     if profile_parts:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Maximize2, Upload } from "lucide-react";
+import { Maximize2, Upload, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import RequirementsPanel, {
   DEFAULT_REQUIREMENTS,
@@ -86,6 +86,83 @@ function formatTimeShort(startHour: number, days: CourseBlock["days"]): string {
   const timeStr = m === 0 ? `${h12}${ampm}` : `${h12}:${m.toString().padStart(2, "0")}${ampm}`;
   const dayStr = days.map((d) => d.slice(0, 1)).join("");
   return `${dayStr} ${timeStr}`;
+}
+
+// ── Taken courses panel with ratings ───────────────────────────────────────────
+function TakenCoursesPanel({
+  courses,
+  titles,
+  ratings,
+  onRate,
+}: {
+  courses: string[];
+  titles: Record<string, string>;
+  ratings: Record<string, "up" | "down">;
+  onRate: (code: string, rating: "up" | "down") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!courses.length) return null;
+
+  const rated = Object.keys(ratings).length;
+
+  return (
+    <div className="mt-4 border border-border rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-bg transition-colors text-left"
+      >
+        <div className="flex items-center gap-2">
+          {open ? <ChevronDown size={13} className="text-[#aaa]" /> : <ChevronRight size={13} className="text-[#aaa]" />}
+          <span className="text-[13px] font-semibold text-[#1c1c1c]">Rate Taken Courses</span>
+          <span className="text-[11px] text-[#aaa]">{courses.length} courses</span>
+        </div>
+        {rated > 0 && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#4A7FC114] text-[#4A7FC1] font-medium">
+            {rated} rated
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="divide-y divide-[#f0ede8] max-h-72 overflow-y-auto">
+          {courses.map((code) => {
+            const rating = ratings[code];
+            return (
+              <div key={code} className="flex items-center gap-3 px-4 py-2 hover:bg-bg transition-colors">
+                <span className="text-[12px] font-semibold text-[#4A7FC1] w-20 shrink-0">{code}</span>
+                <span className="text-[12px] text-[#555] flex-1 truncate">
+                  {titles[code] ?? ""}
+                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    title="Liked this course"
+                    className={`p-1 rounded-md transition-colors ${
+                      rating === "up"
+                        ? "bg-[#4E9E6E20] text-[#4E9E6E]"
+                        : "text-[#ccc] hover:text-[#4E9E6E] hover:bg-[#4E9E6E10]"
+                    }`}
+                    onClick={() => onRate(code, "up")}
+                  >
+                    <ThumbsUp size={13} />
+                  </button>
+                  <button
+                    title="Didn't like this course"
+                    className={`p-1 rounded-md transition-colors ${
+                      rating === "down"
+                        ? "bg-[#C1496A20] text-[#C1496A]"
+                        : "text-[#ccc] hover:text-[#C1496A] hover:bg-[#C1496A10]"
+                    }`}
+                    onClick={() => onRate(code, "down")}
+                  >
+                    <ThumbsDown size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Panel card wrapper ─────────────────────────────────────────────────────────
@@ -268,10 +345,34 @@ export default function Home() {
   });
   const [completedCourses, setCompletedCourses] = useState<string[]>([]);
   const completedCoursesRef = useRef<string[]>([]);
+  const [courseTitles, setCourseTitles] = useState<Record<string, string>>({});
+  const [courseRatings, setCourseRatings] = useState<Record<string, "up" | "down">>({});
   const [prereqWarnings, setPrereqWarnings] = useState<PrereqWarning[]>([]);
   const [courseMetadata, setCourseMetadata] = useState<Record<string, Record<string, string>>>({});
   const [preferences, setPreferences] = useState<Preferences>({ prioritize: [], avoid: [] });
   const [feedbackState, setFeedbackState] = useState<Record<number, "up" | "down">>({});
+
+  function handleCourseRating(code: string, rating: "up" | "down") {
+    setCourseRatings((prev) => {
+      // Toggle off if same rating clicked again
+      if (prev[code] === rating) {
+        const next = { ...prev };
+        delete next[code];
+        return next;
+      }
+      const next = { ...prev, [code]: rating };
+
+      // Build a chat message so the LLM acknowledges the preference
+      const title = courseTitles[code] ? ` (${courseTitles[code]})` : "";
+      const msg =
+        rating === "up"
+          ? `I really liked ${code}${title}. Please factor this into future course recommendations.`
+          : `I didn't enjoy ${code}${title}. Please suggest alternatives or avoid similar courses.`;
+      handleSend(msg);
+
+      return next;
+    });
+  }
 
   const COURSE_REGEX = /\b(\d+\.[A-Z0-9]+[A-Za-z]?)\b/g;
 
@@ -442,7 +543,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: next,
-          profile: { ...profile, completed_courses: completedCourses },
+          profile: {
+            ...profile,
+            completed_courses: completedCourses,
+            liked_courses: Object.entries(courseRatings).filter(([,v]) => v === "up").map(([k]) => k),
+            disliked_courses: Object.entries(courseRatings).filter(([,v]) => v === "down").map(([k]) => k),
+          },
           preferences,
         }),
       });
@@ -515,12 +621,23 @@ export default function Home() {
         const codes = subjects.map((s) => s.subject_id);
         setCompletedCourses(codes);
         completedCoursesRef.current = codes;
+        const titleMap: Record<string, string> = {};
+        subjects.forEach((s) => { titleMap[s.subject_id] = s.title; });
+        setCourseTitles(titleMap);
 
-        // 2. Update profile major from the road
+        // 2. Update profile major + infer year from road
         const majorCode = parseMajorCode(coursesOfStudy);
-        if (majorCode) {
-          setProfile((prev) => ({ ...prev, major: majorCode }));
-        }
+        const maxSem = Math.max(...subjects.map((s) => s.semester).filter((s) => s >= 1 && s < 20), 0);
+        const inferredYear =
+          maxSem <= 2 ? "Freshman" :
+          maxSem <= 4 ? "Sophomore" :
+          maxSem <= 6 ? "Junior" :
+          maxSem <= 8 ? "Senior" : "MEng";
+        setProfile((prev) => ({
+          ...prev,
+          ...(majorCode ? { major: majorCode } : {}),
+          year: inferredYear,
+        }));
 
         // 3. Build and set requirements directly from road data
         const progressAssertions: Record<string, { substitutions?: string[] }> =
@@ -645,6 +762,12 @@ export default function Home() {
               </div>
               <div className="overflow-auto p-5">
                 <RequirementsPanel requirements={requirements} />
+                <TakenCoursesPanel
+                  courses={completedCourses}
+                  titles={courseTitles}
+                  ratings={courseRatings}
+                  onRate={handleCourseRating}
+                />
               </div>
             </div>
           </div>
@@ -686,6 +809,12 @@ export default function Home() {
                 action={courseroadAction}
               >
                 <RequirementsPanel requirements={requirements} compact />
+                <TakenCoursesPanel
+                  courses={completedCourses}
+                  titles={courseTitles}
+                  ratings={courseRatings}
+                  onRate={handleCourseRating}
+                />
               </PanelCard>
 
               <PanelCard
