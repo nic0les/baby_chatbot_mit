@@ -2,11 +2,21 @@
 
 import { useState } from "react";
 import { X, Plus } from "lucide-react";
-import type { Preferences } from "../types";
+import type { Preferences, PersonalizationMemory } from "../types";
+
+const CATEGORY_COLORS: Record<PersonalizationMemory["category"], string> = {
+  schedule:  "#4A7FC1",
+  learning:  "#4E9E6E",
+  workload:  "#C97B4B",
+  interests: "#9171C7",
+  other:     "#888888",
+};
 
 interface Props {
   preferences: Preferences;
   onChange: (p: Preferences) => void;
+  memories?: PersonalizationMemory[];
+  onMemoriesChange?: (m: PersonalizationMemory[]) => void;
 }
 
 function TagList({
@@ -18,8 +28,9 @@ function TagList({
   color: string;
   onRemove: (item: string) => void;
 }) {
+  if (!items.length) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 min-h-[24px]">
+    <div className="flex flex-wrap gap-1.5 mb-2">
       {items.map((item) => (
         <span
           key={item}
@@ -39,7 +50,12 @@ function TagList({
   );
 }
 
-export default function PreferencesPanel({ preferences, onChange }: Props) {
+export default function PreferencesPanel({
+  preferences,
+  onChange,
+  memories = [],
+  onMemoriesChange,
+}: Props) {
   const [priInput, setPriInput] = useState("");
   const [avoidInput, setAvoidInput] = useState("");
 
@@ -58,21 +74,80 @@ export default function PreferencesPanel({ preferences, onChange }: Props) {
   }
 
   function removePrioritize(item: string) {
-    onChange({ ...preferences, prioritize: preferences.prioritize.filter((x) => x !== item) });
+    onChange({
+      ...preferences,
+      prioritize: preferences.prioritize.filter((x) => x !== item),
+    });
   }
 
   function removeAvoid(item: string) {
-    onChange({ ...preferences, avoid: preferences.avoid.filter((x) => x !== item) });
+    onChange({
+      ...preferences,
+      avoid: preferences.avoid.filter((x) => x !== item),
+    });
+  }
+
+  function deleteMemory(id: string) {
+    onMemoriesChange?.(memories.filter((m) => m.id !== id));
   }
 
   return (
     <div className="flex flex-col gap-3 text-[12px]">
+      {/* Memory cards (from Personalization page) */}
+      {memories.length > 0 && (
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-[#aaa] mb-2">
+            Learning Profile
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {memories.map((m) => {
+              const color = CATEGORY_COLORS[m.category];
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-start justify-between gap-2 rounded-lg px-2.5 py-1.5"
+                  style={{
+                    borderLeft: `2px solid ${color}`,
+                    backgroundColor: `${color}0d`,
+                  }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <span
+                      className="text-[10px] font-semibold uppercase tracking-wide"
+                      style={{ color }}
+                    >
+                      {m.key}
+                    </span>
+                    <div className="text-[11px] text-[#555] leading-snug mt-0.5 truncate">
+                      {m.value}
+                    </div>
+                  </div>
+                  {onMemoriesChange && (
+                    <button
+                      onClick={() => deleteMemory(m.id)}
+                      className="shrink-0 opacity-40 hover:opacity-100 hover:text-[#C1496A] transition-all mt-0.5"
+                    >
+                      <X size={10} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Prioritize */}
       <div>
         <div className="text-[11px] font-semibold uppercase tracking-wide text-[#aaa] mb-1.5">
           Prioritize
         </div>
-        <TagList items={preferences.prioritize} color="#2D7A4F" onRemove={removePrioritize} />
-        <div className="flex items-center gap-1.5 mt-2">
+        <TagList
+          items={preferences.prioritize}
+          color="#2D7A4F"
+          onRemove={removePrioritize}
+        />
+        <div className="flex items-center gap-1.5">
           <input
             value={priInput}
             onChange={(e) => setPriInput(e.target.value)}
@@ -89,12 +164,17 @@ export default function PreferencesPanel({ preferences, onChange }: Props) {
         </div>
       </div>
 
+      {/* Avoid */}
       <div>
         <div className="text-[11px] font-semibold uppercase tracking-wide text-[#aaa] mb-1.5">
           Avoid
         </div>
-        <TagList items={preferences.avoid} color="#A31F34" onRemove={removeAvoid} />
-        <div className="flex items-center gap-1.5 mt-2">
+        <TagList
+          items={preferences.avoid}
+          color="#A31F34"
+          onRemove={removeAvoid}
+        />
+        <div className="flex items-center gap-1.5">
           <input
             value={avoidInput}
             onChange={(e) => setAvoidInput(e.target.value)}

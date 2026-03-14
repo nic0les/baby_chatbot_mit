@@ -5,14 +5,16 @@ import {
   Calendar,
   BookOpen,
   MessageSquare,
+  Sparkles,
   Settings,
 } from "lucide-react";
 
 const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "schedule", label: "Schedule", icon: Calendar },
-  { id: "requirements", label: "Requirements", icon: BookOpen },
-  { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "dashboard",        label: "Dashboard",        icon: LayoutDashboard },
+  { id: "schedule",         label: "Schedule",          icon: Calendar },
+  { id: "requirements",     label: "Requirements",      icon: BookOpen },
+  { id: "chat",             label: "Chat",              icon: MessageSquare },
+  { id: "personalization",  label: "Personalization",   icon: Sparkles },
 ];
 
 interface Props {

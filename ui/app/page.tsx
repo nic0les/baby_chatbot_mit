@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Maximize2, Upload, ThumbsUp, ThumbsDown, ChevronDown, ChevronRight } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import RequirementsPanel, {
@@ -12,6 +12,7 @@ import { buildRoadRequirements, parseMajorCode } from "./utils/majorRequirements
 import ChatPanel from "./components/ChatPanel";
 import FullscreenModal from "./components/FullscreenModal";
 import PreferencesPanel from "./components/PreferencesPanel";
+import PersonalizationPage from "./components/PersonalizationPage";
 import UnitLoadBar from "./components/UnitLoadBar";
 import type {
   Message,
@@ -20,6 +21,7 @@ import type {
   StudentProfile,
   PrereqWarning,
   Preferences,
+  PersonalizationMemory,
 } from "./types";
 
 const YEARS = ["Freshman", "Sophomore", "Junior", "Senior", "MEng"] as const;
@@ -29,6 +31,7 @@ const PAGE_TITLES: Record<string, string> = {
   schedule: "Weekly Schedule",
   requirements: "Graduation Requirements",
   chat: "Course Advisor",
+  personalization: "Personalization",
 };
 
 // ── Suggestions tray ───────────────────────────────────────────────────────────
@@ -350,7 +353,42 @@ export default function Home() {
   const [prereqWarnings, setPrereqWarnings] = useState<PrereqWarning[]>([]);
   const [courseMetadata, setCourseMetadata] = useState<Record<string, Record<string, string>>>({});
   const [preferences, setPreferences] = useState<Preferences>({ prioritize: [], avoid: [] });
+  const [memories, setMemories] = useState<PersonalizationMemory[]>([]);
   const [feedbackState, setFeedbackState] = useState<Record<number, "up" | "down">>({});
+
+  // ── localStorage: load on mount, auto-navigate to onboarding if first visit ──
+  useEffect(() => {
+    try {
+      const savedPrefs = localStorage.getItem("mit_advisor_preferences");
+      const savedMems  = localStorage.getItem("mit_advisor_memories");
+      if (savedPrefs) setPreferences(JSON.parse(savedPrefs));
+      if (savedMems)  setMemories(JSON.parse(savedMems));
+      if (!localStorage.getItem("mit_advisor_onboarding_done")) {
+        setActiveNav("personalization");
+      }
+    } catch {
+      // ignore localStorage errors (e.g. SSR or private browsing)
+    }
+  }, []);
+
+  // ── localStorage: persist on change ──────────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem("mit_advisor_preferences", JSON.stringify(preferences)); } catch {}
+  }, [preferences]);
+
+  useEffect(() => {
+    try { localStorage.setItem("mit_advisor_memories", JSON.stringify(memories)); } catch {}
+  }, [memories]);
+
+  function handleClearAll() {
+    setMemories([]);
+    setPreferences({ prioritize: [], avoid: [] });
+    try {
+      localStorage.removeItem("mit_advisor_memories");
+      localStorage.removeItem("mit_advisor_preferences");
+      localStorage.removeItem("mit_advisor_onboarding_done");
+    } catch {}
+  }
 
   function handleCourseRating(code: string, rating: "up" | "down") {
     setCourseRatings((prev) => {
@@ -550,6 +588,7 @@ export default function Home() {
             disliked_courses: Object.entries(courseRatings).filter(([,v]) => v === "down").map(([k]) => k),
           },
           preferences,
+          memories,
         }),
       });
 
@@ -796,6 +835,16 @@ export default function Home() {
           </div>
         );
 
+      case "personalization":
+        return (
+          <PersonalizationPage
+            memories={memories}
+            onMemoriesChange={setMemories}
+            onClearAll={handleClearAll}
+            onDone={() => setActiveNav("dashboard")}
+          />
+        );
+
       default: // dashboard
         return (
           <>
@@ -842,11 +891,13 @@ export default function Home() {
               <PanelCard
                 title="My Preferences"
                 subtitle="Courses & constraints for the advisor"
-                onExpand={() => {}}
+                onExpand={() => setActiveNav("personalization")}
               >
                 <PreferencesPanel
                   preferences={preferences}
                   onChange={setPreferences}
+                  memories={memories}
+                  onMemoriesChange={setMemories}
                 />
               </PanelCard>
             </div>

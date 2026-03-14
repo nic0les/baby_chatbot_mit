@@ -46,3 +46,10 @@ export interface Preferences {
   prioritize: string[];
   avoid: string[];
 }
+
+export interface PersonalizationMemory {
+  id: string;
+  key: string;
+  value: string;
+  category: "schedule" | "learning" | "workload" | "interests" | "other";
+}
