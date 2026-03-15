@@ -313,6 +313,7 @@ def stream_chat(
     messages: list[dict],
     profile: dict | None = None,
     preferences: dict | None = None,
+    memories: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     """
     Generator yielding text chunks from Qwen3-8B.
@@ -355,6 +356,15 @@ def stream_chat(
             pref_parts.append("Avoid: " + ", ".join(preferences["avoid"]))
         if pref_parts:
             system_sections.append("## Student preferences\n" + "\n".join(pref_parts))
+    if memories:
+        mem_lines = []
+        for m in memories:
+            key = m.get("key", "")
+            value = m.get("value", "")
+            if key and value:
+                mem_lines.append(f"- {key}: {value}")
+        if mem_lines:
+            system_sections.append("## Personalization (learning style & preferences)\n" + "\n".join(mem_lines))
     if context:
         system_sections.append(context)
 

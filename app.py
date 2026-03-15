@@ -70,13 +70,14 @@ class ChatRequest(BaseModel):
     messages: list[dict]
     profile: dict = {}
     preferences: dict = {}
+    memories: list[dict] = []
 
 
 @app.post("/chat")
 def chat(req: ChatRequest):
     """Streaming chat endpoint. Returns plain-text chunks as they're generated."""
     return StreamingResponse(
-        stream_chat(req.messages, req.profile, req.preferences),
+        stream_chat(req.messages, req.profile, req.preferences, req.memories),
         media_type="text/plain; charset=utf-8",
     )
 
